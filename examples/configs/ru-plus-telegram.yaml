@@ -1,0 +1,56 @@
+# RU default plus one higher-precedence Telegram special zone.
+# Telegram traffic marked 0xc8/0xff selects table 200 before RU default table 100.
+
+global:
+  refresh_interval: 45m
+  http_timeout: 30s
+  state_dir: /var/lib/route-sync
+  log_format: text
+  metrics_listen: 127.0.0.1:9108
+  route_protocol: 99
+  rule_priority_base: 1000
+  rule_priority_step: 10
+  enable_prefix_aggregation: true
+
+defaults:
+  enable_ru_builtin_source: true
+
+routing:
+  ru_default:
+    enabled: true
+    source:
+      type: ripe_country
+      country: RU
+    target:
+      table: 100
+      dev: eth0
+      via4: 192.0.2.1
+      via6: 2001:db8:100::1
+      onlink: false
+      family: dual
+    rule:
+      enabled: true
+      priority: 2000
+      fwmark: 100
+      mask: 255
+      table: 100
+
+special_zones:
+  - name: telegram
+    enabled: true
+    source:
+      type: txt
+      url: examples/fixtures/txt/telegram.txt
+    target:
+      table: 200
+      dev: tailscale0
+      via4: 100.64.0.10
+      via6: fd7a:115c:a1e0::10
+      onlink: true
+      family: dual
+    rule:
+      enabled: true
+      priority: 1000
+      fwmark: 200
+      mask: 255
+      table: 200

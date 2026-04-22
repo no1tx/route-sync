@@ -1,0 +1,8 @@
+# Corporate VPN steering example.
+
+10.42.0.0/16
+10.77.0.0/16
+192.168.240.0/20
+
+# Partner IPv6 lab range.
+fd42:77::/48

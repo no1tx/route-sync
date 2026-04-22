@@ -1,0 +1,5 @@
+# Nothing to parse here.
+
+; semicolon comment
+
+# another comment

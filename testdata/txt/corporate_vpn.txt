@@ -1,0 +1,5 @@
+# Source-based routing examples can use these RFC1918 ranges.
+
+10.42.0.0/16
+10.77.0.0/16
+192.168.240.0/20

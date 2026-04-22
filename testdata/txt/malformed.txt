@@ -1,0 +1,7 @@
+# Contains valid and invalid CIDRs; parser should warn and continue.
+
+10.0.0.0/24
+not-a-cidr
+192.0.2.0/33
+2001:db8::/32
+2001:db8:::broken/64

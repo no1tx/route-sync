@@ -1,0 +1,25 @@
+{
+  "messages": [],
+  "see_also": [],
+  "version": "0.3",
+  "data_call_status": "supported",
+  "cached": true,
+  "data": {
+    "query_time": "2026-04-21T00:00:00",
+    "resources": {
+      "asn": [12389, 20485, 8359],
+      "ipv4": [
+        "2.16.32.0/20",
+        "5.8.0.0/16",
+        "31.13.144.0/21",
+        "77.88.0.0/18"
+      ],
+      "ipv6": [
+        "2a02:6b8::/32",
+        "2a00:1fa0::/32"
+      ]
+    }
+  },
+  "status": "ok",
+  "status_code": 200
+}

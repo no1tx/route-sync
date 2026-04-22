@@ -1,0 +1,84 @@
+# Local fixture-driven development config.
+# Safe intent: use with `check` or `apply --dry-run` while developing.
+# Do not apply directly on a production host without changing dev/table/gateway values.
+
+global:
+  refresh_interval: 5m
+  http_timeout: 5s
+  state_dir: /tmp/route-sync-local-dev-state
+  log_format: text
+  metrics_listen: 127.0.0.1:19108
+  route_protocol: 99
+  rule_priority_base: 1000
+  rule_priority_step: 10
+  enable_prefix_aggregation: true
+
+defaults:
+  # Disabled so local dev does not need live internet access.
+  enable_ru_builtin_source: false
+
+routing:
+  ru_default:
+    enabled: false
+    source:
+      type: ripe_country
+      country: RU
+    target:
+      table: 100
+      dev: lo
+      family: dual
+    rule:
+      enabled: false
+      priority: 2000
+      fwmark: 100
+      mask: 255
+      table: 100
+
+special_zones:
+  - name: telegram
+    enabled: true
+    source:
+      type: txt
+      url: examples/fixtures/txt/telegram.txt
+    target:
+      table: 200
+      dev: lo
+      family: dual
+    rule:
+      enabled: true
+      priority: 1000
+      fwmark: 200
+      mask: 255
+      table: 200
+
+  - name: youtube-eu
+    enabled: true
+    source:
+      type: txt
+      url: examples/fixtures/txt/youtube_eu.txt
+    target:
+      table: 201
+      dev: lo
+      family: ipv4
+    rule:
+      enabled: true
+      priority: 1010
+      fwmark: 201
+      mask: 255
+      table: 201
+
+  - name: corporate-vpn
+    enabled: true
+    source:
+      type: txt
+      url: examples/fixtures/txt/corporate_vpn.txt
+    target:
+      table: 202
+      dev: lo
+      family: dual
+    rule:
+      enabled: true
+      priority: 1020
+      fwmark: 202
+      mask: 255
+      table: 202

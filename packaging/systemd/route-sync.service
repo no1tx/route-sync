@@ -1,0 +1,27 @@
+[Unit]
+Description=route-sync Linux policy routing controller
+Documentation=man:ip-rule(8) man:ip-route(8)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/route-sync
+ExecStart=/usr/local/bin/route-sync daemon --config ${ROUTE_SYNC_CONFIG} ${ROUTE_SYNC_EXTRA_ARGS}
+Restart=on-failure
+RestartSec=5s
+
+# CAP_NET_ADMIN is required to add/delete routes and policy rules.
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/route-sync /run
+PrivateTmp=true
+PrivateDevices=false
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+SystemCallFilter=@system-service @network-io
+
+[Install]
+WantedBy=multi-user.target

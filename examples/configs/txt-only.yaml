@@ -1,0 +1,66 @@
+# Offline-friendly TXT-only setup.
+# The built-in RU source is disabled; all route groups use local TXT files.
+
+global:
+  refresh_interval: 15m
+  http_timeout: 10s
+  state_dir: /tmp/route-sync-txt-only-state
+  log_format: text
+  metrics_listen: 127.0.0.1:19108
+  route_protocol: 99
+  rule_priority_base: 1000
+  rule_priority_step: 10
+  enable_prefix_aggregation: true
+
+defaults:
+  enable_ru_builtin_source: false
+
+routing:
+  ru_default:
+    enabled: false
+    source:
+      type: ripe_country
+      country: RU
+    target:
+      table: 100
+      dev: eth0
+      family: dual
+    rule:
+      enabled: false
+      priority: 2000
+      fwmark: 100
+      mask: 255
+      table: 100
+
+special_zones:
+  - name: telegram
+    enabled: true
+    source:
+      type: txt
+      url: examples/fixtures/txt/telegram.txt
+    target:
+      table: 200
+      dev: lo
+      family: dual
+    rule:
+      enabled: true
+      priority: 1000
+      fwmark: 200
+      mask: 255
+      table: 200
+
+  - name: mixed-dualstack
+    enabled: true
+    source:
+      type: txt
+      url: examples/fixtures/txt/mixed_dualstack.txt
+    target:
+      table: 203
+      dev: lo
+      family: dual
+    rule:
+      enabled: true
+      priority: 1030
+      fwmark: 203
+      mask: 255
+      table: 203

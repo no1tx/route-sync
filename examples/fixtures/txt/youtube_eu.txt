@@ -1,0 +1,8 @@
+# Small illustrative YouTube/CDN Europe list.
+# These are documentation fixtures, not authoritative production ranges.
+
+172.217.16.0/20
+172.217.128.0/19
+216.58.192.0/19
+2a00:1450:4000::/37
+

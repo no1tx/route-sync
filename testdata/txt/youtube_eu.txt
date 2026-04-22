@@ -1,0 +1,6 @@
+# IPv4-only-ish fixture with duplicate for dedup tests.
+
+172.217.16.0/20
+172.217.16.0/20
+216.58.192.0/19 ; inline comment
+

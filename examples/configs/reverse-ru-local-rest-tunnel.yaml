@@ -1,0 +1,69 @@
+# Reverse mode for a Tailscale Exit Node:
+# - Tailscale client traffic enters this host from 100.64.0.0/10.
+# - RU prefixes use the local/default WAN path.
+# - Everything else falls through to the default route in table 100 via WireGuard.
+#
+# This assumes:
+# - route-sync runs on the Tailscale Exit Node.
+# - wg-upstream is a working WireGuard tunnel to an upstream gateway.
+# - the upstream gateway performs NAT/MASQUERADE for tunnel traffic.
+# - WireGuard peer AllowedIPs includes 0.0.0.0/0 and wg-quick uses Table = off.
+
+global:
+  refresh_interval: 1h
+  http_timeout: 30s
+  state_dir: /var/lib/route-sync
+  log_format: text
+  metrics_listen: 127.0.0.1:9108
+  route_protocol: 99
+  rule_priority_base: 1000
+  rule_priority_step: 10
+  enable_prefix_aggregation: true
+  # If true, daemon shutdown removes owned routes/rules from table 100.
+  cleanup_on_shutdown: false
+
+defaults:
+  enable_ru_builtin_source: true
+
+routing:
+  ru_default:
+    enabled: true
+    source:
+      type: ripe_country
+      country: RU
+    target:
+      # Table 100 is selected only for Tailscale client traffic by the rule below.
+      table: 100
+
+      # Prefix routes from RIPE RU go through the local WAN path.
+      dev: wan0
+      via4: 203.0.113.1
+      family: ipv4
+
+      # If any fetched RU prefix contains this host's non-private local IP,
+      # skip that whole fetched prefix. This prevents route-sync from stealing
+      # connectivity to the Exit Node's own public address.
+      exclude_local_ips: true
+
+      # Optional manual exclusions also become throw routes in table 100.
+      # Keep tailnet/service destinations out of the tunnel default.
+      exclude_prefixes:
+        - 100.64.0.0/10
+        - 100.100.100.100/32
+
+      # Default route in table 100 catches everything not matched by a RU prefix.
+      default:
+        dev: wg-upstream
+        via4: 10.77.0.2
+
+    rule:
+      enabled: true
+      priority: 1500
+      table: 100
+      from: 100.64.0.0/10
+
+      # mask: 0 means no fwmark matcher; this is a source-based rule.
+      fwmark: 0
+      mask: 0
+
+special_zones: []

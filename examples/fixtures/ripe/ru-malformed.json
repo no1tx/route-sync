@@ -1,0 +1,6 @@
+{
+  "status": "ok",
+  "data": {
+    "resources": {
+      "ipv4": ["5.8.0.0/16"],
+      "ipv6": [
