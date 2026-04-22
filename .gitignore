@@ -1,5 +1,5 @@
 bin/
-route-sync
+/route-sync
 *.test
 coverage.out
 .DS_Store
