@@ -47,20 +47,20 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
             -trimpath \
             -ldflags="-s -w" \
-            -o dist/myapp-linux-amd64 \
-            ./cmd/myapp
+            -o dist/route-sync-linux-amd64 \
+            ./cmd/route-sync
 
       - name: Pack
         run: |
           cd dist
-          tar -czf myapp-linux-amd64.tar.gz myapp-linux-amd64
-          sha256sum myapp-linux-amd64.tar.gz > myapp-linux-amd64.tar.gz.sha256
+          tar -czf route-sync-linux-amd64.tar.gz route-sync-linux-amd64
+          sha256sum route-sync-linux-amd64.tar.gz > route-sync-linux-amd64.tar.gz.sha256
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${{ github.event.release.tag_name }}" \
-            dist/myapp-linux-amd64.tar.gz \
-            dist/myapp-linux-amd64.tar.gz.sha256 \
+            dist/route-sync-linux-amd64.tar.gz \
+            dist/route-sync-linux-amd64.tar.gz.sha256 \
             --clobber
