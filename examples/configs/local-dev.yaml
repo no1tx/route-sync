@@ -4,6 +4,7 @@
 
 global:
   refresh_interval: 5m
+  health_check_interval: 5s
   http_timeout: 5s
   state_dir: /tmp/route-sync-local-dev-state
   log_format: text

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"route-sync/internal/config"
+	"route-sync/internal/health"
 	"route-sync/internal/rtnl"
 )
 
@@ -130,5 +131,24 @@ func TestDualStackRoutesUseFamilySpecificGatewaysAndOnlink(t *testing.T) {
 	}
 	if !seen4 || !seen6 {
 		t.Fatalf("family gateways not selected correctly: %+v", p.Groups[0].RoutesToAdd)
+	}
+}
+
+func TestMultipleHealthyGatewaysProduceMetricOrderedRoutes(t *testing.T) {
+	prefix := netip.MustParsePrefix("10.0.0.0/24")
+	g := InputGroup{
+		Config:   config.RouteGroup{Name: "x", Target: config.TargetConfig{Table: 100, Family: "ipv4"}},
+		Prefixes: []netip.Prefix{prefix},
+		TargetHops: []health.ResolvedHop{
+			{Name: "gw1-ipv4", Dev: "wg-a", LinkIndex: 3, Via: netip.MustParseAddr("10.77.0.1"), Metric: 100, Healthy: true},
+			{Name: "gw2-ipv4", Dev: "wg-b", LinkIndex: 4, Via: netip.MustParseAddr("10.88.0.1"), Metric: 110, Healthy: true},
+		},
+	}
+	p := Build(99, []InputGroup{g})
+	if len(p.Groups) != 1 || len(p.Groups[0].RoutesToAdd) != 2 {
+		t.Fatalf("expected two routes for two healthy gateways, got %+v", p.Groups)
+	}
+	if p.Groups[0].RoutesToAdd[0].Metric != 110 || p.Groups[0].RoutesToAdd[1].Metric != 100 {
+		t.Fatalf("expected ordered metrics 100/110, got %+v", p.Groups[0].RoutesToAdd)
 	}
 }

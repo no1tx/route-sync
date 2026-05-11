@@ -35,6 +35,7 @@ type Config struct {
 
 type GlobalConfig struct {
 	RefreshInterval         Duration `yaml:"refresh_interval"`
+	HealthCheckInterval     Duration `yaml:"health_check_interval"`
 	HTTPTimeout             Duration `yaml:"http_timeout"`
 	StateDir                string   `yaml:"state_dir"`
 	LogFormat               string   `yaml:"log_format"`
@@ -69,24 +70,43 @@ type SourceConfig struct {
 }
 
 type TargetConfig struct {
-	Table           int            `yaml:"table"`
-	Dev             string         `yaml:"dev"`
-	Via             string         `yaml:"via"`
-	Via4            string         `yaml:"via4"`
-	Via6            string         `yaml:"via6"`
-	OnLink          bool           `yaml:"onlink"`
-	Family          string         `yaml:"family"`
-	Default         *NextHopConfig `yaml:"default"`
-	ExcludeLocalIPs bool           `yaml:"exclude_local_ips"`
-	ExcludePrefixes []string       `yaml:"exclude_prefixes"`
+	Table           int             `yaml:"table"`
+	Dev             string          `yaml:"dev"`
+	Via             string          `yaml:"via"`
+	Via4            string          `yaml:"via4"`
+	Via6            string          `yaml:"via6"`
+	OnLink          bool            `yaml:"onlink"`
+	Family          string          `yaml:"family"`
+	HealthCheck     HealthCheck     `yaml:"health_check"`
+	Gateways        []GatewayConfig `yaml:"gateways"`
+	Default         *NextHopConfig  `yaml:"default"`
+	ExcludeLocalIPs bool            `yaml:"exclude_local_ips"`
+	ExcludePrefixes []string        `yaml:"exclude_prefixes"`
 }
 
 type NextHopConfig struct {
-	Dev    string `yaml:"dev"`
-	Via    string `yaml:"via"`
-	Via4   string `yaml:"via4"`
-	Via6   string `yaml:"via6"`
-	OnLink bool   `yaml:"onlink"`
+	Dev         string          `yaml:"dev"`
+	Via         string          `yaml:"via"`
+	Via4        string          `yaml:"via4"`
+	Via6        string          `yaml:"via6"`
+	OnLink      bool            `yaml:"onlink"`
+	HealthCheck HealthCheck     `yaml:"health_check"`
+	Gateways    []GatewayConfig `yaml:"gateways"`
+}
+
+type HealthCheck struct {
+	Targets []string `yaml:"targets"`
+	Timeout Duration `yaml:"timeout"`
+}
+
+type GatewayConfig struct {
+	Name        string      `yaml:"name"`
+	Dev         string      `yaml:"dev"`
+	Via         string      `yaml:"via"`
+	Via4        string      `yaml:"via4"`
+	Via6        string      `yaml:"via6"`
+	OnLink      bool        `yaml:"onlink"`
+	HealthCheck HealthCheck `yaml:"health_check"`
 }
 
 type RuleConfig struct {
@@ -114,6 +134,9 @@ func Load(path string) (*Config, error) {
 func ApplyDefaults(c *Config) {
 	if c.Global.RefreshInterval.Duration == 0 {
 		c.Global.RefreshInterval.Duration = time.Hour
+	}
+	if c.Global.HealthCheckInterval.Duration == 0 {
+		c.Global.HealthCheckInterval.Duration = 5 * time.Second
 	}
 	if c.Global.HTTPTimeout.Duration == 0 {
 		c.Global.HTTPTimeout.Duration = 30 * time.Second
@@ -219,7 +242,7 @@ func validateGroup(g RouteGroup) error {
 	if g.Target.Table <= 0 {
 		errs = append(errs, "target.table is required")
 	}
-	if g.Target.Dev == "" {
+	if g.Target.Dev == "" && len(g.Target.Gateways) == 0 {
 		errs = append(errs, "target.dev is required")
 	}
 	if g.Target.Family == "" {
@@ -228,7 +251,7 @@ func validateGroup(g RouteGroup) error {
 	if g.Target.Family != "dual" && g.Target.Family != "ipv4" && g.Target.Family != "ipv6" {
 		errs = append(errs, "target.family must be dual, ipv4, or ipv6")
 	}
-	errs = append(errs, validateNextHop("target", g.Target.Family, NextHopConfig{Dev: g.Target.Dev, Via: g.Target.Via, Via4: g.Target.Via4, Via6: g.Target.Via6, OnLink: g.Target.OnLink}, false)...)
+	errs = append(errs, validateNextHop("target", g.Target.Family, NextHopConfig{Dev: g.Target.Dev, Via: g.Target.Via, Via4: g.Target.Via4, Via6: g.Target.Via6, OnLink: g.Target.OnLink, HealthCheck: g.Target.HealthCheck, Gateways: g.Target.Gateways}, false)...)
 	if g.Target.Default != nil {
 		errs = append(errs, validateNextHop("target.default", g.Target.Family, *g.Target.Default, true)...)
 	}
@@ -258,6 +281,33 @@ func validateGroup(g RouteGroup) error {
 
 func validateNextHop(path, family string, h NextHopConfig, requireDev bool) []string {
 	var errs []string
+	if err := validateHealthCheck(path+".health_check", h.HealthCheck); err != nil {
+		errs = append(errs, err...)
+	}
+	if len(h.Gateways) > 0 {
+		for i, gw := range h.Gateways {
+			gwPath := fmt.Sprintf("%s.gateways[%d]", path, i)
+			merged := NextHopConfig{
+				Dev:         coalesce(gw.Dev, h.Dev),
+				Via:         gw.Via,
+				Via4:        gw.Via4,
+				Via6:        gw.Via6,
+				OnLink:      gw.OnLink || h.OnLink,
+				HealthCheck: mergeHealthChecks(h.HealthCheck, gw.HealthCheck),
+			}
+			if merged.Via == "" && merged.Via4 == "" && merged.Via6 == "" {
+				errs = append(errs, gwPath+" must define via, via4, or via6")
+			}
+			if gw.Name != "" && strings.TrimSpace(gw.Name) == "" {
+				errs = append(errs, gwPath+".name must not be blank")
+			}
+			if hcErrs := validateHealthCheck(gwPath+".health_check", merged.HealthCheck); len(hcErrs) > 0 {
+				errs = append(errs, hcErrs...)
+			}
+			errs = append(errs, validateNextHop(gwPath, family, merged, true)...)
+		}
+		return errs
+	}
 	if requireDev && h.Dev == "" {
 		errs = append(errs, path+".dev is required")
 	}
@@ -286,4 +336,42 @@ func validateNextHop(path, family string, h NextHopConfig, requireDev bool) []st
 		}
 	}
 	return errs
+}
+
+func validateHealthCheck(path string, hc HealthCheck) []string {
+	var errs []string
+	for _, raw := range hc.Targets {
+		addr, err := netip.ParseAddr(raw)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s.targets contains invalid IP %q", path, raw))
+			continue
+		}
+		if !addr.IsValid() {
+			errs = append(errs, fmt.Sprintf("%s.targets contains invalid IP %q", path, raw))
+		}
+	}
+	if hc.Timeout.Duration < 0 {
+		errs = append(errs, path+".timeout must be positive")
+	}
+	return errs
+}
+
+func mergeHealthChecks(parent, child HealthCheck) HealthCheck {
+	out := parent
+	if len(child.Targets) > 0 {
+		out.Targets = child.Targets
+	}
+	if child.Timeout.Duration != 0 {
+		out.Timeout = child.Timeout
+	}
+	return out
+}
+
+func coalesce(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

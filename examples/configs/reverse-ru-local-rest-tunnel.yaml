@@ -11,6 +11,7 @@
 
 global:
   refresh_interval: 1h
+  health_check_interval: 5s
   http_timeout: 30s
   state_dir: /var/lib/route-sync
   log_format: text
@@ -37,8 +38,18 @@ routing:
 
       # Prefix routes from RIPE RU go through the local WAN path.
       dev: wan0
-      via4: 203.0.113.1
       family: ipv4
+      gateways:
+        - name: ru-local-primary
+          via4: 203.0.113.1
+          health_check:
+            targets:
+              - 77.88.8.8
+        - name: ru-local-backup
+          via4: 203.0.113.2
+          health_check:
+            targets:
+              - 77.88.8.1
 
       # If any fetched RU prefix contains this host's non-private local IP,
       # skip that whole fetched prefix. This prevents route-sync from stealing
@@ -54,7 +65,11 @@ routing:
       # Default route in table 100 catches everything not matched by a RU prefix.
       default:
         dev: wg-upstream
-        via4: 10.77.0.2
+        gateways:
+          - name: foreign-primary
+            via4: 10.77.0.2
+          - name: foreign-backup
+            via4: 10.78.0.2
 
     rule:
       enabled: true

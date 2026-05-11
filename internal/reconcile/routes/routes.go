@@ -30,13 +30,13 @@ func Apply(k rtnl.Kernel, plans []planner.GroupPlan, log *slog.Logger) error {
 	for _, gp := range plans {
 		preRemove := conflictingRouteRemovals(gp)
 		for _, r := range preRemove {
-			log.Info("removing owned route before replacement", "group", gp.Group, "table", r.Table, "dst", r.Dst, "type", routeType(r), "dev", r.Dev, "via", r.Via, "onlink", r.OnLink)
+			log.Info("removing owned route before replacement", "group", gp.Group, "table", r.Table, "dst", r.Dst, "type", routeType(r), "dev", r.Dev, "via", r.Via, "onlink", r.OnLink, "metric", r.Metric)
 			if err := k.DeleteRoute(r); err != nil {
 				return err
 			}
 		}
 		for _, r := range gp.RoutesToAdd {
-			log.Info("adding owned route", "group", gp.Group, "table", r.Table, "dst", r.Dst, "type", routeType(r), "dev", r.Dev, "via", r.Via, "onlink", r.OnLink)
+			log.Info("adding owned route", "group", gp.Group, "table", r.Table, "dst", r.Dst, "type", routeType(r), "dev", r.Dev, "via", r.Via, "onlink", r.OnLink, "metric", r.Metric)
 			if err := k.AddRoute(r); err != nil {
 				return err
 			}
@@ -48,7 +48,7 @@ func Apply(k rtnl.Kernel, plans []planner.GroupPlan, log *slog.Logger) error {
 			if preRemoved[routeIdentity(r)] {
 				continue
 			}
-			log.Info("removing obsolete owned route", "group", gp.Group, "table", r.Table, "dst", r.Dst, "type", routeType(r), "dev", r.Dev, "via", r.Via, "onlink", r.OnLink)
+			log.Info("removing obsolete owned route", "group", gp.Group, "table", r.Table, "dst", r.Dst, "type", routeType(r), "dev", r.Dev, "via", r.Via, "onlink", r.OnLink, "metric", r.Metric)
 			if err := k.DeleteRoute(r); err != nil {
 				return err
 			}

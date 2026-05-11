@@ -3,6 +3,7 @@
 
 global:
   refresh_interval: 30m
+  health_check_interval: 5s
   http_timeout: 20s
   state_dir: /var/lib/route-sync
   log_format: json
@@ -24,10 +25,15 @@ routing:
     target:
       table: 100
       dev: eth0
-      via4: 192.0.2.1
-      via6: 2001:db8:100::1
       onlink: false
       family: dual
+      gateways:
+        - name: primary-uplink
+          via4: 192.0.2.1
+          via6: 2001:db8:100::1
+        - name: backup-uplink
+          via4: 198.51.100.1
+          via6: 2001:db8:101::1
     rule:
       enabled: true
       priority: 2000
@@ -44,10 +50,19 @@ special_zones:
     target:
       table: 200
       dev: tailscale0
-      via4: 100.64.0.10
-      via6: fd7a:115c:a1e0::10
       onlink: true
       family: dual
+      health_check:
+        targets:
+          - 149.154.167.99
+          - 149.154.175.50
+      gateways:
+        - name: ts-primary
+          via4: 100.64.0.10
+          via6: fd7a:115c:a1e0::10
+        - name: ts-backup
+          via4: 100.64.0.11
+          via6: fd7a:115c:a1e0::11
     rule:
       enabled: true
       priority: 1000
@@ -63,8 +78,12 @@ special_zones:
     target:
       table: 201
       dev: wg0
-      via: 10.10.10.1
       family: ipv4
+      gateways:
+        - name: eu-primary
+          via4: 10.10.10.1
+        - name: eu-backup
+          via4: 10.10.10.2
     rule:
       enabled: true
       priority: 1010
@@ -80,10 +99,18 @@ special_zones:
     target:
       table: 202
       dev: tun0
-      via4: 10.42.255.1
-      via6: fd42:77::1
       onlink: false
       family: dual
+      health_check:
+        targets:
+          - 10.42.255.10
+      gateways:
+        - name: corp-primary
+          via4: 10.42.255.1
+          via6: fd42:77::1
+        - name: corp-backup
+          via4: 10.42.255.2
+          via6: fd42:78::1
     rule:
       enabled: true
       priority: 1020

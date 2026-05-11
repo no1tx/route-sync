@@ -3,6 +3,7 @@
 
 global:
   refresh_interval: 1h
+  health_check_interval: 5s
   http_timeout: 30s
   state_dir: /var/lib/route-sync
   log_format: text
@@ -24,10 +25,21 @@ routing:
     target:
       table: 100
       dev: eth0
-      via4: 192.0.2.1
-      via6: 2001:db8:100::1
       onlink: false
       family: dual
+      health_check:
+        # If omitted, IPv4 gateways use 8.8.8.8 and 1.1.1.1 by default.
+        targets:
+          - 8.8.8.8
+          - 1.1.1.1
+        timeout: 1s
+      gateways:
+        - name: primary-uplink
+          via4: 192.0.2.1
+          via6: 2001:db8:100::1
+        - name: backup-uplink
+          via4: 198.51.100.1
+          via6: 2001:db8:101::1
     rule:
       enabled: true
       priority: 2000

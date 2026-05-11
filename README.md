@@ -182,6 +182,7 @@ global:
   rule_priority_base: 1000
   rule_priority_step: 10
   enable_prefix_aggregation: true
+  health_check_interval: 5s
   cleanup_on_shutdown: false
 
 defaults:
@@ -196,7 +197,11 @@ routing:
     target:
       table: 100
       dev: eth0
-      via4: 192.0.2.1
+      gateways:
+        - name: primary-uplink
+          via4: 192.0.2.1
+        - name: backup-uplink
+          via4: 198.51.100.1
       family: ipv4
     rule:
       enabled: true
@@ -213,9 +218,13 @@ Target fields:
 - `table`: routing table ID.
 - `dev`: output interface for source prefixes.
 - `via`, `via4`, `via6`: next-hop gateways.
+- `gateways`: optional ordered list of failover gateways for source prefixes.
+- `health_check.targets`: optional list of ping targets for the gateway. If omitted, IPv4 gateways use `8.8.8.8` and `1.1.1.1`; IPv6 gateways use public IPv6 resolver anycast addresses.
+- `health_check.timeout`: per-ping timeout. Defaults to `1s`.
 - `onlink`: set Linux onlink route flag.
 - `family`: `ipv4`, `ipv6`, or `dual`.
 - `default`: optional managed default route in the same table.
+- `global.health_check_interval`: daemon-only fast tick for gateway failover re-evaluation. Defaults to `5s`.
 - `exclude_local_ips`: skip fetched prefixes that contain this host's non-private local IPs.
 - `exclude_prefixes`: explicit `throw` routes in the managed table.
 
@@ -254,8 +263,12 @@ routing:
     target:
       table: 100
       dev: wg-upstream
-      via4: 10.77.0.1
       family: ipv4
+      gateways:
+        - name: primary-upstream
+          via4: 10.77.0.1
+        - name: backup-upstream
+          via4: 10.78.0.1
     rule:
       enabled: true
       priority: 1500
@@ -298,8 +311,12 @@ routing:
 
       # RU prefixes use local WAN.
       dev: wan0
-      via4: 203.0.113.1
       family: ipv4
+      gateways:
+        - name: ru-local-primary
+          via4: 203.0.113.1
+        - name: ru-local-backup
+          via4: 203.0.113.2
 
       # If a fetched prefix contains this host's public/non-private IP,
       # skip that entire fetched prefix to preserve host reachability.
@@ -314,7 +331,11 @@ routing:
       # Everything not matched above uses the upstream tunnel.
       default:
         dev: wg-upstream
-        via4: 10.77.0.2
+        gateways:
+          - name: foreign-primary
+            via4: 10.77.0.2
+          - name: foreign-backup
+            via4: 10.78.0.2
 
     rule:
       enabled: true
@@ -518,9 +539,9 @@ sudo editor /etc/route-sync.yaml
 Update:
 
 - `target.dev`: local WAN interface.
-- `target.via4`: local WAN gateway.
+- `target.via4` or `target.gateways`: local WAN gateway or failover gateways.
 - `target.default.dev`: WireGuard interface.
-- `target.default.via4`: upstream tunnel IP.
+- `target.default.via4` or `target.default.gateways`: upstream tunnel IP or failover gateways.
 - `rule.from`: source CIDR for traffic that should use the split table.
 
 Check:

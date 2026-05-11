@@ -3,6 +3,7 @@
 
 global:
   refresh_interval: 15m
+  health_check_interval: 5s
   http_timeout: 10s
   state_dir: /tmp/route-sync-txt-only-state
   log_format: text

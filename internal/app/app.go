@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"route-sync/internal/config"
+	"route-sync/internal/health"
 	"route-sync/internal/logging"
 	"route-sync/internal/metrics"
 	"route-sync/internal/planner"
@@ -126,6 +127,7 @@ func selectLogFormat(opts Options, cfg *config.Config) string {
 
 func BuildPlan(ctx context.Context, cfg *config.Config, kernel rtnl.Kernel, log *slog.Logger, reg *metrics.Registry) (planner.Plan, error) {
 	st := state.New(cfg.Global.StateDir)
+	pinger := health.ExecPinger{}
 	var inputs []planner.InputGroup
 	for _, g := range cfg.Groups() {
 		groupLog := log.With("group", g.Name, "source", g.Source.Type)
@@ -155,16 +157,27 @@ func BuildPlan(ctx context.Context, cfg *config.Config, kernel rtnl.Kernel, log 
 				groupLog.Warn("failed to persist last known good source state", "error", err)
 			}
 		}
-		linkIndex, err := kernel.LinkIndexByName(g.Target.Dev)
-		if err != nil {
-			return planner.Plan{}, fmt.Errorf("%s: resolve target dev %s: %w", g.Name, g.Target.Dev, err)
+		linkIndex := 0
+		if g.Target.Dev != "" {
+			linkIndex, err = kernel.LinkIndexByName(g.Target.Dev)
+			if err != nil {
+				return planner.Plan{}, fmt.Errorf("%s: resolve target dev %s: %w", g.Name, g.Target.Dev, err)
+			}
 		}
 		defaultLinkIndex := 0
-		if g.Target.Default != nil {
+		if g.Target.Default != nil && g.Target.Default.Dev != "" {
 			defaultLinkIndex, err = kernel.LinkIndexByName(g.Target.Default.Dev)
 			if err != nil {
 				return planner.Plan{}, fmt.Errorf("%s: resolve target default dev %s: %w", g.Name, g.Target.Default.Dev, err)
 			}
+		}
+		targetHops, err := resolveTargetHops(ctx, g.Name, "target", g.Target.Family, g.Target, kernel, pinger, reg, groupLog)
+		if err != nil {
+			return planner.Plan{}, fmt.Errorf("%s: resolve target gateways: %w", g.Name, err)
+		}
+		defaultHops, err := resolveDefaultHops(ctx, g.Name, g.Target.Family, g.Target.Default, kernel, pinger, reg, groupLog)
+		if err != nil {
+			return planner.Plan{}, fmt.Errorf("%s: resolve default gateways: %w", g.Name, err)
 		}
 		currentRoutes, err := routes.CurrentOwned(kernel, g.Target.Table, cfg.Global.RouteProtocol, g.Target.Family)
 		if err != nil {
@@ -178,7 +191,7 @@ func BuildPlan(ctx context.Context, cfg *config.Config, kernel rtnl.Kernel, log 
 		if err != nil {
 			return planner.Plan{}, fmt.Errorf("%s: build exclusion inputs: %w", g.Name, err)
 		}
-		inputs = append(inputs, planner.InputGroup{Config: g, Prefixes: prefixes, ThrowPrefixes: throwPrefixes, CoveredLocalAddrs: coveredLocalAddrs, SourceType: provider.Type(), FromFallback: fromFallback, LinkIndex: linkIndex, DefaultLinkIndex: defaultLinkIndex, CurrentRoutes: currentRoutes, CurrentRules: currentRules})
+		inputs = append(inputs, planner.InputGroup{Config: g, Prefixes: prefixes, ThrowPrefixes: throwPrefixes, CoveredLocalAddrs: coveredLocalAddrs, SourceType: provider.Type(), FromFallback: fromFallback, LinkIndex: linkIndex, DefaultLinkIndex: defaultLinkIndex, TargetHops: targetHops, DefaultHops: defaultHops, CurrentRoutes: currentRoutes, CurrentRules: currentRules})
 	}
 	plan := planner.Build(cfg.Global.RouteProtocol, inputs)
 	for _, gp := range plan.Groups {
@@ -210,6 +223,130 @@ func exclusionInputs(target config.TargetConfig, log *slog.Logger) ([]netip.Pref
 	localAddrs := prefixAddrs(source.FilterFamily(local, target.Family))
 	log.Info("route exclusion inputs prepared", "throw_prefixes", len(throwPrefixes), "covered_local_addrs", len(localAddrs), "exclude_local_ips", target.ExcludeLocalIPs)
 	return throwPrefixes, localAddrs, nil
+}
+
+func resolveTargetHops(ctx context.Context, group, scope, family string, target config.TargetConfig, kernel rtnl.Kernel, pinger health.Pinger, reg *metrics.Registry, log *slog.Logger) ([]health.ResolvedHop, error) {
+	candidates := gatewaysFromTarget(target)
+	return resolveCandidates(ctx, group, scope, family, candidates, kernel, pinger, reg, log)
+}
+
+func resolveDefaultHops(ctx context.Context, group, family string, next *config.NextHopConfig, kernel rtnl.Kernel, pinger health.Pinger, reg *metrics.Registry, log *slog.Logger) ([]health.ResolvedHop, error) {
+	if next == nil {
+		return nil, nil
+	}
+	candidates := gatewaysFromNextHop(*next)
+	return resolveCandidates(ctx, group, "default", family, candidates, kernel, pinger, reg, log)
+}
+
+func resolveCandidates(ctx context.Context, group, scope, family string, candidates []health.Candidate, kernel rtnl.Kernel, pinger health.Pinger, reg *metrics.Registry, log *slog.Logger) ([]health.ResolvedHop, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	var out []health.ResolvedHop
+	if family == "" || family == "dual" || family == "ipv4" {
+		v4, err := health.Select(ctx, "ipv4", group+"."+scope, filterCandidatesByFamily(candidates, 4), kernel.LinkIndexByName, pinger, reg, log)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v4...)
+	}
+	if family == "dual" || family == "ipv6" {
+		v6, err := health.Select(ctx, "ipv6", group+"."+scope, filterCandidatesByFamily(candidates, 6), kernel.LinkIndexByName, pinger, reg, log)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v6...)
+	}
+	return out, nil
+}
+
+func gatewaysFromTarget(target config.TargetConfig) []health.Candidate {
+	if len(target.Gateways) == 0 {
+		return gatewaysFromNextHop(config.NextHopConfig{Dev: target.Dev, Via: target.Via, Via4: target.Via4, Via6: target.Via6, OnLink: target.OnLink, HealthCheck: target.HealthCheck})
+	}
+	out := make([]health.Candidate, 0, len(target.Gateways)*2)
+	for i, gw := range target.Gateways {
+		out = append(out, candidatesFromGateway(gw, target.Dev, target.OnLink, target.HealthCheck, i)...)
+	}
+	return out
+}
+
+func gatewaysFromNextHop(next config.NextHopConfig) []health.Candidate {
+	if len(next.Gateways) == 0 {
+		return candidatesFromHop("primary", next.Dev, next.OnLink, next.HealthCheck, next.Via, next.Via4, next.Via6)
+	}
+	out := make([]health.Candidate, 0, len(next.Gateways)*2)
+	for i, gw := range next.Gateways {
+		out = append(out, candidatesFromGateway(gw, next.Dev, next.OnLink, next.HealthCheck, i)...)
+	}
+	return out
+}
+
+func candidatesFromGateway(gw config.GatewayConfig, fallbackDev string, fallbackOnLink bool, parentHC config.HealthCheck, index int) []health.Candidate {
+	name := gw.Name
+	if name == "" {
+		name = fmt.Sprintf("gw%d", index+1)
+	}
+	return candidatesFromHop(name, firstNonEmpty(gw.Dev, fallbackDev), gw.OnLink || fallbackOnLink, mergeHealthChecks(parentHC, gw.HealthCheck), gw.Via, gw.Via4, gw.Via6)
+}
+
+func mergeHealthChecks(parent, child config.HealthCheck) config.HealthCheck {
+	out := parent
+	if len(child.Targets) > 0 {
+		out.Targets = child.Targets
+	}
+	if child.Timeout.Duration != 0 {
+		out.Timeout = child.Timeout
+	}
+	return out
+}
+
+func filterCandidatesByFamily(candidates []health.Candidate, family int) []health.Candidate {
+	out := make([]health.Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if !c.Via.IsValid() {
+			continue
+		}
+		if family == 4 && c.Via.Is4() {
+			out = append(out, c)
+		}
+		if family == 6 && c.Via.Is6() {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func candidatesFromHop(name, dev string, onLink bool, hc config.HealthCheck, any, v4, v6 string) []health.Candidate {
+	var out []health.Candidate
+	if v4 != "" {
+		if addr, err := netip.ParseAddr(v4); err == nil {
+			out = append(out, health.Candidate{Name: name + "-ipv4", Dev: dev, OnLink: onLink, Via: addr, HealthCheck: hc})
+		}
+	}
+	if v6 != "" {
+		if addr, err := netip.ParseAddr(v6); err == nil {
+			out = append(out, health.Candidate{Name: name + "-ipv6", Dev: dev, OnLink: onLink, Via: addr, HealthCheck: hc})
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	if any != "" {
+		if addr, err := netip.ParseAddr(any); err == nil {
+			out = append(out, health.Candidate{Name: name, Dev: dev, OnLink: onLink, Via: addr, HealthCheck: hc})
+		}
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func localNonPrivatePrefixes() ([]netip.Prefix, error) {
@@ -352,16 +489,19 @@ func runDaemon(ctx context.Context, opts Options, cfg *config.Config, kernel rtn
 	sig := signals.Notify(ctx)
 	defer sig.Stop()
 	metrics.Serve(sig.Context, cfg.Global.MetricsListen, reg, log)
-	log.Info("daemon startup", "interval", cfg.Global.RefreshInterval.Duration)
-	ticker := time.NewTicker(cfg.Global.RefreshInterval.Duration)
-	defer ticker.Stop()
+	log.Info("daemon startup", "interval", cfg.Global.RefreshInterval.Duration, "health_check_interval", cfg.Global.HealthCheckInterval.Duration)
+	refreshTicker := time.NewTicker(cfg.Global.RefreshInterval.Duration)
+	healthTicker := time.NewTicker(cfg.Global.HealthCheckInterval.Duration)
+	defer refreshTicker.Stop()
+	defer healthTicker.Stop()
 	active := cfg
-	run := func() {
+	run := func(reason string) {
+		log.Debug("reconcile triggered", "reason", reason)
 		if err := reconcileOnce(sig.Context, active, kernel, log, reg, opts.DryRun); err != nil {
 			log.Error("reconciliation failed", "error", err)
 		}
 	}
-	run()
+	run("startup")
 	for {
 		select {
 		case <-sig.Context.Done():
@@ -373,8 +513,10 @@ func runDaemon(ctx context.Context, opts Options, cfg *config.Config, kernel rtn
 			}
 			log.Info("daemon shutdown")
 			return nil
-		case <-ticker.C:
-			run()
+		case <-refreshTicker.C:
+			run("refresh_interval")
+		case <-healthTicker.C:
+			run("health_check_interval")
 		case <-sig.Reload:
 			log.Info("SIGHUP received; reloading config")
 			next, err := loadConfig(opts)
@@ -383,8 +525,9 @@ func runDaemon(ctx context.Context, opts Options, cfg *config.Config, kernel rtn
 				continue
 			}
 			active = next
-			ticker.Reset(active.Global.RefreshInterval.Duration)
-			run()
+			refreshTicker.Reset(active.Global.RefreshInterval.Duration)
+			healthTicker.Reset(active.Global.HealthCheckInterval.Duration)
+			run("reload")
 		}
 	}
 }

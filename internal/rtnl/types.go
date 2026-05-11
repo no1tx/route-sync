@@ -16,6 +16,7 @@ type Route struct {
 	LinkIndex int
 	Via       netip.Addr
 	OnLink    bool
+	Metric    int
 	Dst       netip.Prefix
 }
 

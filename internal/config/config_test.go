@@ -52,6 +52,24 @@ func TestValidateViaFamily(t *testing.T) {
 	}
 }
 
+func TestValidateGatewayHealthTargets(t *testing.T) {
+	v := true
+	c := Config{
+		Global:   GlobalConfig{RouteProtocol: 99, RulePriorityBase: 1000, RulePriorityStep: 10, LogFormat: "text"},
+		Defaults: Defaults{EnableRUBuiltinSource: &v},
+		Routing: Routing{RUDefault: RouteGroup{Enabled: true, Name: "ru_default", Source: SourceConfig{Type: "ripe_country", Country: "RU"}, Target: TargetConfig{
+			Table: 100, Dev: "eth0", Family: "ipv4",
+			Gateways: []GatewayConfig{
+				{Name: "primary", Via4: "192.0.2.1", HealthCheck: HealthCheck{Targets: []string{"8.8.8.8"}}},
+				{Name: "backup", Via4: "198.51.100.1", HealthCheck: HealthCheck{Targets: []string{"not-an-ip"}}},
+			},
+		}, Rule: RuleConfig{Enabled: true, Priority: 2000, Table: 100}}},
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("expected invalid gateway health target")
+	}
+}
+
 func TestExampleConfigsValidate(t *testing.T) {
 	for _, name := range []string{
 		"minimal-ru-default.yaml",

@@ -41,7 +41,7 @@ func (NetlinkKernel) ListRoutes(table, family, protocol int) ([]Route, error) {
 		if !ok {
 			continue
 		}
-		rr := Route{Table: r.Table, Protocol: int(r.Protocol), LinkIndex: r.LinkIndex, Dst: p, OnLink: r.Flags&int(netlink.FLAG_ONLINK) != 0}
+		rr := Route{Table: r.Table, Protocol: int(r.Protocol), LinkIndex: r.LinkIndex, Dst: p, OnLink: r.Flags&int(netlink.FLAG_ONLINK) != 0, Metric: r.Priority}
 		if r.Type == unix.RTN_THROW {
 			rr.Type = RouteTypeThrow
 		}
@@ -56,7 +56,7 @@ func (NetlinkKernel) ListRoutes(table, family, protocol int) ([]Route, error) {
 }
 
 func (NetlinkKernel) AddRoute(r Route) error {
-	nlr := netlink.Route{Table: r.Table, Protocol: netlink.RouteProtocol(r.Protocol), LinkIndex: r.LinkIndex, Dst: prefixToIPNet(r.Dst)}
+	nlr := netlink.Route{Table: r.Table, Protocol: netlink.RouteProtocol(r.Protocol), LinkIndex: r.LinkIndex, Dst: prefixToIPNet(r.Dst), Priority: r.Metric}
 	if r.Type == RouteTypeThrow {
 		nlr.Type = unix.RTN_THROW
 		nlr.LinkIndex = 0
@@ -72,7 +72,7 @@ func (NetlinkKernel) AddRoute(r Route) error {
 }
 
 func (NetlinkKernel) DeleteRoute(r Route) error {
-	nlr := netlink.Route{Table: r.Table, Protocol: netlink.RouteProtocol(r.Protocol), LinkIndex: r.LinkIndex, Dst: prefixToIPNet(r.Dst)}
+	nlr := netlink.Route{Table: r.Table, Protocol: netlink.RouteProtocol(r.Protocol), LinkIndex: r.LinkIndex, Dst: prefixToIPNet(r.Dst), Priority: r.Metric}
 	if r.Type == RouteTypeThrow {
 		nlr.Type = unix.RTN_THROW
 		nlr.LinkIndex = 0

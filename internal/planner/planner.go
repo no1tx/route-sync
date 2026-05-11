@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"route-sync/internal/config"
+	"route-sync/internal/health"
 	"route-sync/internal/rtnl"
 	"route-sync/internal/source"
 )
@@ -36,6 +37,8 @@ type InputGroup struct {
 	FromFallback      bool
 	LinkIndex         int
 	DefaultLinkIndex  int
+	TargetHops        []health.ResolvedHop
+	DefaultHops       []health.ResolvedHop
 	CurrentRoutes     []rtnl.Route
 	CurrentRules      []rtnl.Rule
 }
@@ -66,14 +69,42 @@ func Build(routeProtocol int, groups []InputGroup) Plan {
 func desiredRoutes(routeProtocol int, g InputGroup, prefixes []netip.Prefix) []rtnl.Route {
 	out := make([]rtnl.Route, 0, len(prefixes)+len(g.ThrowPrefixes)+2)
 	for _, p := range prefixes {
-		out = append(out, rtnl.Route{Group: g.Config.Name, Table: g.Config.Target.Table, Protocol: routeProtocol, Dev: g.Config.Target.Dev, LinkIndex: g.LinkIndex, Via: routeVia(g.Config.Target, p), OnLink: g.Config.Target.OnLink, Dst: p})
+		hops := matchingHops(g.TargetHops, p)
+		if len(hops) == 0 {
+			out = append(out, rtnl.Route{Group: g.Config.Name, Table: g.Config.Target.Table, Protocol: routeProtocol, Dev: g.Config.Target.Dev, LinkIndex: g.LinkIndex, Via: routeVia(g.Config.Target, p), OnLink: g.Config.Target.OnLink, Dst: p})
+			continue
+		}
+		for _, hop := range hops {
+			out = append(out, rtnl.Route{Group: g.Config.Name, Table: g.Config.Target.Table, Protocol: routeProtocol, Dev: hop.Dev, LinkIndex: hop.LinkIndex, Via: hop.Via, OnLink: hop.OnLink, Metric: hop.Metric, Dst: p})
+		}
 	}
 	for _, p := range source.FilterFamily(g.ThrowPrefixes, g.Config.Target.Family) {
 		out = append(out, rtnl.Route{Group: g.Config.Name, Table: g.Config.Target.Table, Protocol: routeProtocol, Type: rtnl.RouteTypeThrow, Dst: p})
 	}
 	if g.Config.Target.Default != nil {
 		for _, p := range defaultPrefixes(g.Config.Target.Family) {
-			out = append(out, rtnl.Route{Group: g.Config.Name, Table: g.Config.Target.Table, Protocol: routeProtocol, Dev: g.Config.Target.Default.Dev, LinkIndex: g.DefaultLinkIndex, Via: nextHopVia(*g.Config.Target.Default, p), OnLink: g.Config.Target.Default.OnLink, Dst: p})
+			hops := matchingHops(g.DefaultHops, p)
+			if len(hops) == 0 {
+				out = append(out, rtnl.Route{Group: g.Config.Name, Table: g.Config.Target.Table, Protocol: routeProtocol, Dev: g.Config.Target.Default.Dev, LinkIndex: g.DefaultLinkIndex, Via: nextHopVia(*g.Config.Target.Default, p), OnLink: g.Config.Target.Default.OnLink, Dst: p})
+				continue
+			}
+			for _, hop := range hops {
+				out = append(out, rtnl.Route{Group: g.Config.Name, Table: g.Config.Target.Table, Protocol: routeProtocol, Dev: hop.Dev, LinkIndex: hop.LinkIndex, Via: hop.Via, OnLink: hop.OnLink, Metric: hop.Metric, Dst: p})
+			}
+		}
+	}
+	return out
+}
+
+func matchingHops(hops []health.ResolvedHop, p netip.Prefix) []health.ResolvedHop {
+	if len(hops) == 0 {
+		return nil
+	}
+	want4 := p.Addr().Is4()
+	out := make([]health.ResolvedHop, 0, len(hops))
+	for _, hop := range hops {
+		if hop.Via.IsValid() && hop.Via.Is4() == want4 {
+			out = append(out, hop)
 		}
 	}
 	return out
@@ -207,7 +238,7 @@ func diffRules(desired, current []rtnl.Rule) ([]rtnl.Rule, []rtnl.Rule) {
 }
 
 func routeKey(r rtnl.Route) string {
-	return fmt.Sprintf("%d|%d|%d|%d|%s|%t|%s", r.Table, r.Protocol, r.Type, r.LinkIndex, r.Via, r.OnLink, r.Dst)
+	return fmt.Sprintf("%d|%d|%d|%d|%s|%t|%d|%s", r.Table, r.Protocol, r.Type, r.LinkIndex, r.Via, r.OnLink, r.Metric, r.Dst)
 }
 
 func ruleKey(r rtnl.Rule) string {
