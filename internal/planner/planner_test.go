@@ -148,7 +148,7 @@ func TestMultipleHealthyGatewaysProduceMetricOrderedRoutes(t *testing.T) {
 	if len(p.Groups) != 1 || len(p.Groups[0].RoutesToAdd) != 2 {
 		t.Fatalf("expected two routes for two healthy gateways, got %+v", p.Groups)
 	}
-	if p.Groups[0].RoutesToAdd[0].Metric != 110 || p.Groups[0].RoutesToAdd[1].Metric != 100 {
+	if p.Groups[0].RoutesToAdd[0].Metric != 100 || p.Groups[0].RoutesToAdd[1].Metric != 110 {
 		t.Fatalf("expected ordered metrics 100/110, got %+v", p.Groups[0].RoutesToAdd)
 	}
 }
